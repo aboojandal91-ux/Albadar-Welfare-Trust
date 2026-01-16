@@ -1,0 +1,8 @@
+{
+  "name": "Albadar Welfare Trust",
+  "description": "A transparent and secure platform for managing Albadar Welfare Trust programs, donations, and beneficiary support with role-based access control.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
