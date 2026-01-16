@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, createContext, useContext } from 'react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { UserRole, User, Program, Donation, Expense, Application, LandingPageContent } from './types';
 import { INITIAL_USERS, INITIAL_PROGRAMS, INITIAL_DONATIONS, INITIAL_EXPENSES, INITIAL_APPLICATIONS, INITIAL_LANDING_CONTENT } from './services/mockData';
 
@@ -199,6 +200,7 @@ const App: React.FC = () => {
         </main>
         {user && <BottomNav />}
       </div>
+      <SpeedInsights />
     </AppContext.Provider>
   );
 };
