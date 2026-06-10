@@ -516,34 +516,6 @@ const Login: React.FC = () => {
           </p>
         </form>
       </div>
-
-      {/* Developer Quick Login Section */}
-      <div className="mt-12 w-full max-w-[500px] animate-fade-in-up">
-        <div className="flex items-center space-x-4 mb-6">
-          <div className="h-px flex-grow bg-gray-200"></div>
-          <span className="text-[10px] font-black text-gray-300 uppercase tracking-[0.3em] whitespace-nowrap">Developer Quick Login</span>
-          <div className="h-px flex-grow bg-gray-200"></div>
-        </div>
-        
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { role: UserRole.ADMIN, color: 'bg-amber-50 text-amber-600 border-amber-100', icon: 'fa-user-shield', label: 'Admin' },
-            { role: UserRole.TRUSTEE, color: 'bg-emerald-50 text-emerald-600 border-emerald-100', icon: 'fa-building-shield', label: 'Governance' },
-            { role: UserRole.DONATOR, color: 'bg-rose-50 text-rose-600 border-rose-100', icon: 'fa-hand-holding-heart', label: 'Donator' },
-            { role: UserRole.BENEFICIARY, color: 'bg-blue-50 text-blue-600 border-blue-100', icon: 'fa-people-roof', label: 'Beneficiary' }
-          ].map((dev) => (
-            <button
-              key={dev.role}
-              onClick={() => quickLoginByRole(dev.role)}
-              className={`flex flex-col items-center justify-center p-4 rounded-3xl border ${dev.color} hover:shadow-lg transition-all active:scale-95 group`}
-            >
-              <i className={`fa-solid ${dev.icon} text-lg mb-2 group-hover:scale-110 transition-transform`}></i>
-              <span className="text-[9px] font-black uppercase tracking-widest">{dev.label}</span>
-            </button>
-          ))}
-        </div>
-        <p className="text-center text-[9px] text-gray-300 mt-4 font-medium uppercase tracking-widest italic opacity-50">Debug Mode Active • Mock Identities Enabled</p>
-      </div>
     </div>
   );
 };
