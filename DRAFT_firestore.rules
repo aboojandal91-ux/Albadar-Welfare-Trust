@@ -1,0 +1,137 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Catch-All Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Core Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isValidId(id) { return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    // Look up ADMIN role by checking if the user document says they are ADMIN
+    // It's safer to have an 'admins' collection or just read 'users/uid' where role == 'ADMIN'
+    function isAdmin() { 
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    // 3. Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'role', 'approved']) 
+        && data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() <= 128
+        && data.email is string && data.email.size() <= 256
+        && data.role in ['ADMIN', 'DONATOR', 'BENEFICIARY', 'TRUSTEE']
+        && data.approved is bool;
+    }
+
+    function isValidProgram(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'goal', 'raised', 'category', 'status', 'imageUrl'])
+        && data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 256
+        && data.description is string && data.description.size() <= 5000
+        && data.goal is number
+        && data.raised is number
+        && data.category is string && data.category.size() <= 128
+        && data.status in ['ACTIVE', 'COMPLETED', 'PAUSED']
+        && data.imageUrl is string && data.imageUrl.size() <= 1024;
+    }
+
+    function isValidDonation(data) {
+      return data.keys().hasAll(['id', 'userId', 'programId', 'amount', 'method', 'date', 'status'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.programId is string && data.programId.size() <= 128
+        && data.amount is number && data.amount > 0
+        && data.method in ['EasyPaisa', 'JazzCash', 'BankTransfer']
+        && data.date is string && data.date.size() <= 64
+        && data.status in ['PENDING', 'SUCCESSFUL'];
+    }
+
+    function isValidExpense(data) {
+      return data.keys().hasAll(['id', 'programId', 'userId', 'amount', 'description', 'proofUrl', 'date'])
+        && data.id is string && data.id.size() <= 128
+        && data.programId is string && data.programId.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.amount is number && data.amount > 0
+        && data.description is string && data.description.size() <= 5000
+        && data.proofUrl is string && data.proofUrl.size() <= 1024
+        && data.date is string && data.date.size() <= 64;
+    }
+
+    function isValidApplication(data) {
+      return data.keys().hasAll(['id', 'userId', 'programId', 'status', 'documents', 'appliedDate'])
+        && data.id is string && data.id.size() <= 128
+        && data.userId is string && data.userId.size() <= 128
+        && data.programId is string && data.programId.size() <= 128
+        && data.status in ['PENDING', 'APPROVED', 'REJECTED']
+        && data.documents is list && data.documents.size() <= 10
+        && data.appliedDate is string && data.appliedDate.size() <= 64;
+    }
+    
+    function isValidConfig(data) {
+      return data.keys().hasAll(['landingContent']) 
+        && data.landingContent is map;
+    }
+
+    // 4. Collection Rules
+    match /users/{userId} {
+      // Any authenticated user can read profiles (useful for avatars, names, etc.)
+      allow read: if isSignedIn();
+      // Allow user to create profile (but cannot set self as ADMIN unless it's a seed or something, handled by backend usually... but for now, anyone can create)
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId && isValidUser(incoming());
+      // Admin update or Self update limited fields
+      allow update: if isSignedIn() && isValidId(userId) && isValidUser(incoming()) && (
+        isAdmin() || 
+        (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'firstName', 'lastName', 'phone', 'avatar', 'bio', 'cnic', 'cnicFront', 'cnicBack']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /programs/{programId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidId(programId) && isValidProgram(incoming());
+      // Admins can update. Anyone who created a donation might need to increment `raised`.
+      // It's safer to only let Admins update, but if donations need to update raised directly from client...
+      // We will let ANY user update `raised` if they are only changing `raised`
+      allow update: if isSignedIn() && isValidId(programId) && isValidProgram(incoming()) && (
+        isAdmin() ||
+        (incoming().diff(existing()).affectedKeys().hasOnly(['raised']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /donations/{donationId} {
+      // User can only see their own donations, or Admin can see all
+      allow read: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(donationId) && isValidDonation(incoming()) && incoming().userId == request.auth.uid;
+      // Admins might update status
+      allow update: if isAdmin() && isValidId(donationId) && isValidDonation(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isSignedIn() && (isAdmin() || existing().userId == request.auth.uid);
+      allow create: if isAdmin() && isValidId(expenseId) && isValidExpense(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() && isValidId(expenseId) && isValidExpense(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /applications/{applicationId} {
+      allow read: if isSignedIn() && (isAdmin() || existing().userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(applicationId) && isValidApplication(incoming()) && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() && isValidId(applicationId) && isValidApplication(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

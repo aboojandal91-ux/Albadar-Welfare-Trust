@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing personal information and role.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "DONATOR", "BENEFICIARY", "TRUSTEE"] },
+        "title": { "type": "string" },
+        "avatar": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "bio": { "type": "string" },
+        "cnic": { "type": "string" },
+        "cnicFront": { "type": "string" },
+        "cnicBack": { "type": "string" },
+        "medicalReport": { "type": "string" },
+        "demands": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["id", "name", "email", "role", "approved"]
+    },
+    "Program": {
+      "title": "Program",
+      "description": "Welfare program for which donations are raised.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "goal": { "type": "number" },
+        "raised": { "type": "number" },
+        "category": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "COMPLETED", "PAUSED"] },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["id", "title", "description", "goal", "raised", "category", "status", "imageUrl"]
+    },
+    "Donation": {
+      "title": "Donation",
+      "description": "Donation record from a user to a program.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "programId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string", "enum": ["EasyPaisa", "JazzCash", "BankTransfer"] },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "SUCCESSFUL"] },
+        "purpose": { "type": "string" }
+      },
+      "required": ["id", "userId", "programId", "amount", "method", "date", "status"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Expense record for a specific program.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "programId": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "proofUrl": { "type": "string" },
+        "date": { "type": "string" }
+      },
+      "required": ["id", "programId", "userId", "amount", "description", "proofUrl", "date"]
+    },
+    "Application": {
+      "title": "Application",
+      "description": "Application from a beneficiary for a specific program.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "programId": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] },
+        "documents": { "type": "array", "items": { "type": "string" } },
+        "appliedDate": { "type": "string" },
+        "rejectionReason": { "type": "string" }
+      },
+      "required": ["id", "userId", "programId", "status", "documents", "appliedDate"]
+    },
+    "AppConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration like landing page content.",
+      "type": "object",
+      "properties": {
+        "landingContent": { "type": "object" }
+      }
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profiles."
+    },
+    "programs/{programId}": {
+      "schema": { "$ref": "#/entities/Program" },
+      "description": "Stores welfare programs."
+    },
+    "donations/{donationId}": {
+      "schema": { "$ref": "#/entities/Donation" },
+      "description": "Stores donations."
+    },
+    "expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Stores program expenses."
+    },
+    "applications/{applicationId}": {
+      "schema": { "$ref": "#/entities/Application" },
+      "description": "Stores applications from beneficiaries."
+    },
+    "config/{configId}": {
+      "schema": { "$ref": "#/entities/AppConfig" },
+      "description": "Stores site-wide configuration."
+    }
+  }
+}

@@ -2,6 +2,9 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { UserRole, User, Program, Donation, Expense, Application, LandingPageContent } from './types';
 import { INITIAL_USERS, INITIAL_PROGRAMS, INITIAL_DONATIONS, INITIAL_EXPENSES, INITIAL_APPLICATIONS, INITIAL_LANDING_CONTENT } from './services/mockData';
+import { db, auth, handleFirestoreError, OperationType } from './firebase';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
+import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
 
 export const FIRST_ADMIN_ID = '1';
 
@@ -27,7 +30,7 @@ interface AppContextType {
   addApplication: (programId: string) => void;
   updateApplicationStatus: (id: string, status: 'APPROVED' | 'REJECTED', rejectionReason?: string) => void;
   addProgram: (program: Omit<Program, 'id' | 'raised'>) => void;
-  addUser: (user: Omit<User, 'id' | 'approved'>, initialDonation?: { amount: number, method: any, purpose: string }) => void;
+  addUser: (user: Omit<User, 'id' | 'approved'>, initialDonation?: { amount: number, method: any, purpose: string }, uid?: string) => void;
   updateUser: (id: string, updates: Partial<User>) => void;
   deleteUser: (id: string) => void;
   addExpense: (expense: Omit<Expense, 'id' | 'date' | 'userId'>) => void;
@@ -67,33 +70,114 @@ const App: React.FC = () => {
   const [applications, setApplications] = useState<Application[]>(INITIAL_APPLICATIONS);
   const [landingContent, setLandingContent] = useState<LandingPageContent>(INITIAL_LANDING_CONTENT);
   const [view, setView] = useState('home');
+  const [firebaseUserUid, setFirebaseUserUid] = useState<string | null>(null);
 
+  // Firestore Sync Effect
   useEffect(() => {
-    const savedUser = localStorage.getItem('wt_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-      setView('dashboard');
-    }
+    const unsubPrograms = onSnapshot(collection(db, 'programs'), (snapshot) => {
+      setPrograms(snapshot.docs.map(doc => doc.data() as Program));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'programs'));
+
+    const unsubConfig = onSnapshot(doc(db, 'config', 'landing'), (snapshot) => {
+      if (snapshot.exists()) {
+        setLandingContent(snapshot.data()?.landingContent as LandingPageContent);
+      }
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'config/landing'));
+
+    onAuthStateChanged(auth, (fbUser) => {
+      if (fbUser) {
+        setFirebaseUserUid(fbUser.uid);
+      } else {
+        setFirebaseUserUid(null);
+        setUser(null);
+        if (view !== 'home' && view !== 'team' && view !== 'login') setView('home');
+      }
+    });
+
+    return () => {
+      unsubPrograms();
+      unsubConfig();
+    };
   }, []);
+
+  // Secure collections (only fetch when user is signed in)
+  useEffect(() => {
+    if (!firebaseUserUid) return;
+
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
+      const allUsers = snapshot.docs.map(doc => doc.data() as User);
+      setUsers(allUsers);
+      const currentUserProfile = allUsers.find(u => u.id === firebaseUserUid);
+      if (currentUserProfile) {
+        setUser(currentUserProfile);
+        if (view === 'login' || view === 'home') setView('dashboard');
+      }
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'users'));
+
+    return () => unsubUsers();
+  }, [firebaseUserUid]);
+
+  // Dependent collections based on user role
+  useEffect(() => {
+    if (!user) {
+      setDonations(INITIAL_DONATIONS);
+      setExpenses(INITIAL_EXPENSES);
+      setApplications(INITIAL_APPLICATIONS);
+      return;
+    }
+
+    const isAdmin = user.role === 'ADMIN';
+
+    const donationsQuery = isAdmin 
+      ? collection(db, 'donations') 
+      : query(collection(db, 'donations'), where('userId', '==', user.id));
+
+    const expensesQuery = isAdmin
+      ? collection(db, 'expenses')
+      : query(collection(db, 'expenses'), where('userId', '==', user.id));
+
+    const applicationsQuery = isAdmin
+      ? collection(db, 'applications')
+      : query(collection(db, 'applications'), where('userId', '==', user.id));
+
+    const unsubDonations = onSnapshot(donationsQuery, (snapshot) => {
+      setDonations(snapshot.docs.map(doc => doc.data() as Donation));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'donations'));
+
+    const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
+      setExpenses(snapshot.docs.map(doc => doc.data() as Expense));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'expenses'));
+
+    const unsubApplications = onSnapshot(applicationsQuery, (snapshot) => {
+      setApplications(snapshot.docs.map(doc => doc.data() as Application));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'applications'));
+
+    return () => {
+      unsubDonations();
+      unsubExpenses();
+      unsubApplications();
+    };
+  }, [user?.id, user?.role, view]); // rely on user id and role
 
   const handleSetUser = (u: User | null) => {
     setUser(u);
-    if (u) {
-      localStorage.setItem('wt_user', JSON.stringify(u));
-      setView('dashboard');
-    } else {
-      localStorage.removeItem('wt_user');
+    if (!u) {
       setView('home');
     }
   };
 
-  const logout = () => handleSetUser(null);
+  const logout = async () => {
+    await firebaseSignOut(auth);
+    setUser(null);
+    setView('home');
+  };
 
-  const addDonation = (amount: number, programId: string, method: any = 'EasyPaisa', purpose: string = '') => {
-    const userId = user?.id || 'GUEST';
+  const addDonation = async (amount: number, programId: string, method: any = 'EasyPaisa', purpose: string = '') => {
+    if (!firebaseUserUid) return;
+    const donationId = `d-${Date.now()}`;
     const newDonation: Donation = {
-      id: `d-${Date.now()}`,
-      userId,
+      id: donationId,
+      userId: firebaseUserUid,
       programId,
       amount,
       method,
@@ -101,70 +185,116 @@ const App: React.FC = () => {
       status: 'SUCCESSFUL',
       purpose
     };
-    setDonations(prev => [newDonation, ...prev]);
-    if (programId !== 'GENERAL') {
-      setPrograms(prev => prev.map(p => p.id === programId ? { ...p, raised: p.raised + amount } : p));
+    
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'donations', donationId), newDonation);
+      if (programId !== 'GENERAL') {
+        const prog = programs.find(p => p.id === programId);
+        if (prog) {
+          batch.update(doc(db, 'programs', programId), { raised: prog.raised + amount });
+        }
+      }
+      await batch.commit();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'donations');
     }
   };
 
-  const addUser = (data: Omit<User, 'id' | 'approved'>, initialDonation?: { amount: number, method: any, purpose: string }) => {
-    const newUserId = `u-${Date.now()}`;
-    const newUser: User = { ...data, id: newUserId, approved: true };
-    setUsers(prev => [newUser, ...prev]);
-
-    if (initialDonation && initialDonation.amount > 0) {
-      const donation: Donation = {
-        id: `d-init-${Date.now()}`,
-        userId: newUserId,
-        programId: 'GENERAL',
-        amount: initialDonation.amount,
-        method: initialDonation.method,
-        date: new Date().toISOString(),
-        status: 'SUCCESSFUL',
-        purpose: initialDonation.purpose
-      };
-      setDonations(prev => [donation, ...prev]);
+  const addUser = async (data: Omit<User, 'id' | 'approved'>, initialDonation?: { amount: number, method: any, purpose: string }, forcedUid?: string) => {
+    const uidToUse = forcedUid || firebaseUserUid || `u-${Date.now()}`;
+    const newUser: User = { ...data, id: uidToUse, approved: true };
+    
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', uidToUse), newUser);
+      
+      if (initialDonation && initialDonation.amount > 0) {
+        const donationId = `d-init-${Date.now()}`;
+        const donation: Donation = {
+          id: donationId,
+          userId: uidToUse,
+          programId: 'GENERAL',
+          amount: initialDonation.amount,
+          method: initialDonation.method,
+          date: new Date().toISOString(),
+          status: 'SUCCESSFUL',
+          purpose: initialDonation.purpose
+        };
+        batch.set(doc(db, 'donations', donationId), donation);
+      }
+      await batch.commit();
+      setUser(newUser);
+      setView('dashboard');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'users');
     }
   };
 
-  const addApplication = (programId: string) => {
-    if (!user) return;
+  const addApplication = async (programId: string) => {
+    if (!firebaseUserUid) return;
+    const appId = `a-${Date.now()}`;
     const newApp: Application = {
-      id: `a-${Date.now()}`,
-      userId: user.id,
+      id: appId,
+      userId: firebaseUserUid,
       programId,
       status: 'PENDING',
       documents: ['Verified_ID.pdf'],
       appliedDate: new Date().toISOString()
     };
-    setApplications(prev => [newApp, ...prev]);
-  };
-
-  const updateApplicationStatus = (id: string, status: 'APPROVED' | 'REJECTED', rejectionReason?: string) => {
-    setApplications(prev => prev.map(app => app.id === id ? { ...app, status, rejectionReason } : app));
-  };
-
-  const addProgram = (data: Omit<Program, 'id' | 'raised'>) => {
-    setPrograms(prev => [...prev, { ...data, id: `p-${Date.now()}`, raised: 0 }]);
-  };
-
-  const updateUser = (id: string, updates: Partial<User>) => {
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
-    if (user?.id === id) {
-      const updated = { ...user, ...updates };
-      setUser(updated);
-      localStorage.setItem('wt_user', JSON.stringify(updated));
+    try {
+      await setDoc(doc(db, 'applications', appId), newApp);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'applications');
     }
   };
 
-  const deleteUser = (id: string) => {
-    if (id === FIRST_ADMIN_ID) return;
-    setUsers(prev => prev.filter(u => u.id !== id));
+  const updateApplicationStatus = async (id: string, status: 'APPROVED' | 'REJECTED', rejectionReason?: string) => {
+    try {
+      if (status === 'REJECTED') {
+        await updateDoc(doc(db, 'applications', id), { status, rejectionReason });
+      } else {
+        await updateDoc(doc(db, 'applications', id), { status });
+      }
+    } catch (error) {
+       handleFirestoreError(error, OperationType.UPDATE, 'applications');
+    }
   };
 
-  const addExpense = (data: Omit<Expense, 'id' | 'date' | 'userId'>) => {
-    if (!user) return;
-    setExpenses(prev => [...prev, { ...data, id: `e-${Date.now()}`, date: new Date().toISOString(), userId: user.id }]);
+  const addProgram = async (data: Omit<Program, 'id' | 'raised'>) => {
+    const pId = `p-${Date.now()}`;
+    try {
+      await setDoc(doc(db, 'programs', pId), { ...data, id: pId, raised: 0 });
+    } catch (error) {
+       handleFirestoreError(error, OperationType.CREATE, 'programs');
+    }
+  };
+
+  const updateUser = async (id: string, updates: Partial<User>) => {
+    try {
+      await updateDoc(doc(db, 'users', id), updates);
+    } catch(error) {
+       handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
+  };
+
+  const deleteUser = async (id: string) => {
+    if (id === FIRST_ADMIN_ID) return;
+    try {
+      await deleteDoc(doc(db, 'users', id));
+    } catch(error) {
+       handleFirestoreError(error, OperationType.DELETE, 'users');
+    }
+  };
+
+  const addExpense = async (data: Omit<Expense, 'id' | 'date' | 'userId'>) => {
+    if (!firebaseUserUid) return;
+    const eId = `e-${Date.now()}`;
+    try {
+      await setDoc(doc(db, 'expenses', eId), { ...data, id: eId, date: new Date().toISOString(), userId: firebaseUserUid });
+    } catch(error) {
+      handleFirestoreError(error, OperationType.CREATE, 'expenses');
+    }
   };
 
   const renderView = () => {
